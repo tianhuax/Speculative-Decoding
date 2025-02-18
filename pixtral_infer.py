@@ -2,7 +2,7 @@ import argparse
 import random
 import numpy as np
 import torch
-from sampling import autoregressive_generate, speculative_generate
+from sampling import autoregressive_generate, speculative_generate, speculative_generate_mm, autoregressive_generate_mm
 from ngram_assisted import OneLevelNGramStorage, NGramStorage, ngram_assisted_speculative_generate
 from utils.logits_processor import GreedyProcessor, MultinomialProcessor, TopKProcessor, NucleusProcessor, TopKNucleusProcessor
 from transformers import (
@@ -35,7 +35,7 @@ class InferenceCLI:
         self.cache = False
         self.target_gen = True
         # Ngram Assisted Generation
-        self.ngram_gen = True
+        self.ngram_gen = False
         self.ngram = None
         self.top_k_filler = 3
         self.ngram_n = 3
@@ -79,11 +79,13 @@ class InferenceCLI:
         # Target model
         # target_model = "meta-llama/Llama-3.2-3B-Instruct"
         # target_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8")  None
-        target_model = "llava-hf/llava-1.5-7b-hf"
+        #target_model = "mistral-community/pixtral-12b"
+        target_model = "llava-hf/llava-1.5-13b-hf"
         
         # Drafter model
         # drafter_model = "meta-llama/Llama-3.2-1B-Instruct"
         # drafter_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8") None
+        #drafter_model = "mistral-community/pixtral-12b"
         drafter_model = "llava-hf/llava-1.5-7b-hf"
 
         print(colored("Target model:", on_color="on_yellow"), target_model)
@@ -129,8 +131,11 @@ class InferenceCLI:
         self.drafter.eval()
         
         self.ngram = NGramStorage(n=3, vocab_size=self.target.config.vocab_size)
+
+        #print(self.tokenizer)
         
-        self.end_tokens = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")] # "<|eot_id|>" is the end of turn token for Llama model.
+        #self.end_tokens = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")] # "<|eot_id|>" is the end of turn token for Llama model.
+        self.end_tokens = [self.tokenizer.tokenizer.eos_token_id] # "<|eot_id|>" is the end of turn token for Llama model.
 
     def _perform_command(self, command: str):
         args = command.split(" ")
@@ -308,6 +313,12 @@ class InferenceCLI:
             return_dict=True,
             return_tensors="pt"
         )
+        print(f'input id shape {tokenized['input_ids'].shape}')
+        print(f'attention mask shape {tokenized['attention_mask'].shape}')
+        print(f'pixel_values shape {tokenized['pixel_values'].shape}')
+        print(type(tokenized))
+        #tokenized = tokenized.input_ids[0].tolist()
+        tokenized = [tokenized['input_ids'], tokenized['pixel_values']]
         
         if self.reset_in_between:
             self.ngram.reset()
@@ -319,7 +330,7 @@ class InferenceCLI:
         if self.spec:
             self._set_seed(42)
             spec_start_time = time.time()
-            output_ids, accept_rate = speculative_generate(
+            output_ids, accept_rate = speculative_generate_mm(
                 tokenized,
                 self.drafter,
                 self.target,
@@ -340,6 +351,7 @@ class InferenceCLI:
             print(colored(f"Throughput: {spec_throughput:.1f} tokens/s", "green"))
             print(colored("========== Speculative ==========", "green"))
             
+        
         if self.ngram_gen:
             self._set_seed(42)
             ngram_start_time = time.time()
@@ -372,7 +384,7 @@ class InferenceCLI:
         if self.target_gen:
             self._set_seed(42)
             start_time = time.time()
-            output_ids = autoregressive_generate(
+            output_ids = autoregressive_generate_mm(
                 tokenized,
                 self.target,
                 use_cache=self.cache,
@@ -393,7 +405,7 @@ class InferenceCLI:
 
         if self.dr:
             self._set_seed(42)
-            output_ids = autoregressive_generate(
+            output_ids = autoregressive_generate_mm(
                 tokenized,
                 self.drafter,
                 use_cache=self.cache,
